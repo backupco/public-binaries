@@ -36,10 +36,18 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         with:
           install-only: true
+          
+      # ---- Auth for private repo checkout (Option A: GitHub App) ----
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Verify tags exist in agent/updater
         env:
-          TOKEN: ${{ secrets.REPO_READ_TOKEN }}
+          TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           TAG="${{ steps.vars.outputs.tag }}"
