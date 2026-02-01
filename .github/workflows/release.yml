@@ -44,6 +44,10 @@ jobs:
         with:
           app-id: ${{ vars.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: backupco
+          repositories: |
+            agent
+            updater
 
       - name: Verify tags exist in agent/updater
         env:
