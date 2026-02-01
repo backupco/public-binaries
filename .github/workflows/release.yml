@@ -49,18 +49,24 @@ jobs:
             agent
             updater
 
-      - name: Verify tags exist in agent/updater
+      - name: Checkout agent at tag
+        uses: actions/checkout@v5
+        with:
+          repository: backupco/agent
+          ref: ${{ steps.vars.outputs.tag }}
+          path: agent
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 1
+
+      - name: Debug token access
         env:
-          TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.vars.outputs.tag }}"
+          gh api repos/backupco/agent >/dev/null
+          gh api repos/backupco/updater >/dev/null
+          echo "Token can access private repos."
 
-          echo "Checking tag ${TAG} in backupco/agent..."
-          git ls-remote -q --exit-code "https://x-access-token:${TOKEN}@github.com/backupco/agent.git" "refs/tags/${TAG}" >/dev/null
-
-          echo "Checking tag ${TAG} in backupco/updater..."
-          git ls-remote -q --exit-code "https://x-access-token:${TOKEN}@github.com/backupco/updater.git" "refs/tags/${TAG}" >/dev/null
 
       - name: Checkout agent at tag
         uses: actions/checkout@v5
