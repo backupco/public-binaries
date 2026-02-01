@@ -1,0 +1,147 @@
+name: Release agent + updater binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "SemVer without leading v (e.g. 0.0.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout public-binaries
+        uses: actions/checkout@v5
+
+      - name: Compute tags
+        id: vars
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.6"
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          install-only: true
+
+      - name: Verify tags exist in agent/updater
+        env:
+          TOKEN: ${{ secrets.REPO_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.vars.outputs.tag }}"
+
+          echo "Checking tag ${TAG} in backupco/agent..."
+          git ls-remote -q --exit-code "https://x-access-token:${TOKEN}@github.com/backupco/agent.git" "refs/tags/${TAG}" >/dev/null
+
+          echo "Checking tag ${TAG} in backupco/updater..."
+          git ls-remote -q --exit-code "https://x-access-token:${TOKEN}@github.com/backupco/updater.git" "refs/tags/${TAG}" >/dev/null
+
+      - name: Checkout agent at tag
+        uses: actions/checkout@v5
+        with:
+          repository: backupco/agent
+          ref: ${{ steps.vars.outputs.tag }}
+          path: agent
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 1
+
+      - name: Build agent binaries (GoReleaser)
+        working-directory: agent
+        run: |
+          set -euo pipefail
+          goreleaser build --clean --config .goreleaser.yaml
+
+      - name: Checkout updater at tag
+        uses: actions/checkout@v5
+        with:
+          repository: backupco/updater
+          ref: ${{ steps.vars.outputs.tag }}
+          path: updater
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 1
+
+      - name: Build updater binaries (GoReleaser)
+        working-directory: updater
+        run: |
+          set -euo pipefail
+          goreleaser build --clean --config .goreleaser.yaml
+
+      - name: Collect artifacts
+        run: |
+          set -euo pipefail
+          rm -rf out
+          mkdir -p out
+
+          # Copy only the binaries (not metadata files).
+          # Agent
+          find agent/dist -type f -name "backupco-agent-*" -maxdepth 4 -print -exec cp -f {} out/ \;
+
+          # Updater
+          find updater/dist -type f -name "backupco-updater-*" -maxdepth 4 -print -exec cp -f {} out/ \;
+
+          # Safety: fail if nothing collected
+          test -n "$(ls -1 out | wc -l)"
+
+      - name: Generate checksums.txt
+        run: |
+          set -euo pipefail
+          cd out
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Ensure versioned release exists (vX.Y.Z)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.vars.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists"
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes "Automated binaries release for $TAG."
+          fi
+
+      - name: Upload assets to versioned release (vX.Y.Z)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.vars.outputs.tag }}"
+          gh release upload "$TAG" out/* --clobber
+
+      - name: Ensure latest release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "latest" >/dev/null 2>&1; then
+            echo "Release latest already exists"
+          else
+            gh release create "latest" \
+              --title "latest" \
+              --notes "Rolling release (overwritten on each publish)."
+          fi
+
+      - name: Overwrite latest with new assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "latest" out/* --clobber
+
